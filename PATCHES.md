@@ -8,5 +8,11 @@ This branch extends upstream commit
 runtime-specific names. The fallback preserves behavior on older runtimes and
 avoids downstream assembly rewriting.
 
-Validate the patch by generating a `DynamicMethodDefinition` on .NET 10 and by
-running the consuming Harmony dynamic-delegate probe.
+`LocalBuilder` is abstract on modern CoreCLR. `CecilILGenerator` now resolves the
+runtime's concrete local-builder implementation before invoking its internal
+constructor, with a generated-local probe as a name-independent fallback. This
+prevents Harmony's emitter helper from failing during static initialization on
+Android CoreCLR.
+
+Validate the patches by generating a `DynamicMethodDefinition` on .NET 10 and by
+running the consuming Harmony probes against dynamic methods with local variables.

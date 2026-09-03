@@ -27,15 +27,32 @@ namespace MonoMod.Utils.Cil {
         // https://github.com/dotnet/coreclr/blob/master/src/System.Private.CoreLib/src/System/Reflection/Emit/LocalBuilder.cs
         // Mono: Type, ILGenerator
         // .NET Framework matches .NET Core: int, Type, MethodInfo(, bool)
+        private static readonly Type t_LocalBuilder = ResolveLocalBuilderType();
         private static readonly ConstructorInfo c_LocalBuilder =
-            typeof(LocalBuilder).GetConstructors(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
+            t_LocalBuilder.GetConstructors(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
             .OrderByDescending(c => c.GetParameters().Length).First();
         private static readonly FieldInfo f_LocalBuilder_position =
-            typeof(LocalBuilder).GetField("position", BindingFlags.NonPublic | BindingFlags.Instance);
+            t_LocalBuilder.GetField("position", BindingFlags.NonPublic | BindingFlags.Instance);
         private static readonly FieldInfo f_LocalBuilder_is_pinned =
-            typeof(LocalBuilder).GetField("is_pinned", BindingFlags.NonPublic | BindingFlags.Instance);
+            t_LocalBuilder.GetField("is_pinned", BindingFlags.NonPublic | BindingFlags.Instance);
 
         private static int c_LocalBuilder_params = c_LocalBuilder.GetParameters().Length;
+
+        private static Type ResolveLocalBuilderType() {
+            if (!typeof(LocalBuilder).IsAbstract)
+                return typeof(LocalBuilder);
+
+            Type runtimeType = typeof(LocalBuilder).Assembly.GetType(
+                "System.Reflection.Emit.RuntimeLocalBuilder");
+            if (runtimeType != null)
+                return runtimeType;
+
+            DynamicMethod probe = new DynamicMethod(
+                "MonoMod.RuntimeLocalBuilderProbe",
+                typeof(void),
+                Type.EmptyTypes);
+            return probe.GetILGenerator().DeclareLocal(typeof(object)).GetType();
+        }
 
         private static readonly Dictionary<short, OpCode> _MCCOpCodes = new Dictionary<short, OpCode>();
 

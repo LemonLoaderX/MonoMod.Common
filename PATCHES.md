@@ -1,4 +1,4 @@
-# CoreCLR compatibility patch
+# CoreCLR compatibility patches
 
 This branch extends upstream commit
 `d679ae74d002e513bd88e52091b66283d8537d83` for .NET 10 CoreCLR hosts.
@@ -16,3 +16,9 @@ Android CoreCLR.
 
 Validate the patches by generating a `DynamicMethodDefinition` on .NET 10 and by
 running the consuming Harmony probes against dynamic methods with local variables.
+
+On the pinned .NET 11 main baseline, IRuntimeMethodInfo exposes a nonpublic
+static GetValue method instead of the older instance get_Value accessor.
+DetourRuntimeNETPlatform supports both shapes without rewriting assemblies.
+This path passed the consuming .NET 10 probes and the .NET 11 Android/Bionic
+real-game Harmony and Mod startup probes.

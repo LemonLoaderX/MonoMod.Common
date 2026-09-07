@@ -39,6 +39,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         private static readonly MethodInfo _IRuntimeMethodInfo_get_Value =
             typeof(RuntimeMethodHandle).Assembly.GetType("System.IRuntimeMethodInfo")?.GetMethod("get_Value");
+        private static readonly MethodInfo _IRuntimeMethodInfo_GetValue =
+            typeof(RuntimeMethodHandle).Assembly.GetType("System.IRuntimeMethodInfo")?.GetMethod("GetValue", BindingFlags.NonPublic | BindingFlags.Static);
 
         private static readonly MethodInfo _RuntimeHelpers__CompileMethod =
             typeof(RuntimeHelpers).GetMethod("_CompileMethod", BindingFlags.NonPublic | BindingFlags.Static) ??
@@ -70,7 +72,11 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
                 } else if (_RuntimeHelpers__CompileMethod_TakesRuntimeMethodHandleInternal) {
                     // System.Private.CoreLib 5.0.0.0
-                    _RuntimeHelpers__CompileMethod.Invoke(null, new object[] { _IRuntimeMethodInfo_get_Value.Invoke(_RuntimeMethodHandle_m_value.GetValue(((RuntimeMethodHandle) _DynamicMethod_GetMethodDescriptor.Invoke(dm, _NoArgs))), null) });
+                    object runtimeMethod = _RuntimeMethodHandle_m_value.GetValue((RuntimeMethodHandle) _DynamicMethod_GetMethodDescriptor.Invoke(dm, _NoArgs));
+                    object internalHandle = _IRuntimeMethodInfo_get_Value != null
+                        ? _IRuntimeMethodInfo_get_Value.Invoke(runtimeMethod, null)
+                        : _IRuntimeMethodInfo_GetValue.Invoke(null, new object[] { runtimeMethod });
+                    _RuntimeHelpers__CompileMethod.Invoke(null, new object[] { internalHandle });
 
                 } else {
                     // This should work just fine.

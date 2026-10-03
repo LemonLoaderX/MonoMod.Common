@@ -171,6 +171,10 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         [ThreadStatic]
         private static int hookEntrancy = 0;
+        private static readonly Action<int> RestoreLastPInvokeError =
+            typeof(Marshal).GetMethod("SetLastPInvokeError", new[] { typeof(int) }) is MethodInfo setter
+                ? (Action<int>)Delegate.CreateDelegate(typeof(Action<int>), setter)
+                : _ => { };
         protected unsafe CorJitResult CompileMethodHook(
             IntPtr jit, // ICorJitCompiler*
             IntPtr corJitInfo, // ICorJitInfo*
@@ -179,7 +183,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
             out byte* nativeEntry, 
             out uint nativeSizeOfCode) {
 
-            int _lastError = Marshal.GetLastPInvokeError();
+            int _lastError = Marshal.GetLastWin32Error();
 
             nativeEntry = null;
             nativeSizeOfCode = 0;
@@ -225,10 +229,9 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     }
                 }
 
-                Marshal.SetLastPInvokeError(_lastError);
-                
                 return result;
             } finally {
+                RestoreLastPInvokeError(_lastError);
                 hookEntrancy--;
             }
         }

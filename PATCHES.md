@@ -1,7 +1,7 @@
 # CoreCLR compatibility patches
 
 This branch extends upstream commit
-`d679ae74d002e513bd88e52091b66283d8537d83` for .NET 10 CoreCLR hosts.
+`ea24867bb49621372eaf53b2ef552cbf488af55b` for modern CoreCLR hosts.
 
 `DynamicMethod` stores its return type in the private `_returnType` field on
 .NET 10. `DMDEmitDynamicMethodGenerator` now checks that name after the existing
@@ -22,3 +22,9 @@ static GetValue method instead of the older instance get_Value accessor.
 DetourRuntimeNETPlatform supports both shapes without rewriting assemblies.
 This path passed the consuming .NET 10 probes and the .NET 11 Android/Bionic
 real-game Harmony and Mod startup probes.
+
+Upstream JIT hooks preserve the thread's last P/Invoke error. The fork builds
+against pre-.NET 6 reference assemblies, so it uses GetLastWin32Error and resolves
+SetLastPInvokeError once from the running runtime. Older runtimes without that
+setter retain their previous behavior; modern runtimes restore the value even
+when the hook unwinds through an exception.

@@ -100,22 +100,6 @@ namespace MonoMod.RuntimeDetour.Platforms {
             *vtableEntry = our_compileMethodPtr;
         }
 
-        protected static NativeDetourData CreateNativeTrampolineTo(IntPtr target) {
-            IntPtr mem = DetourHelper.Native.MemAlloc(64); // 64 bytes should be enough on all platforms
-            NativeDetourData data = DetourHelper.Native.Create(mem, target);
-            DetourHelper.Native.MakeWritable(data);
-            DetourHelper.Native.Apply(data);
-            DetourHelper.Native.MakeExecutable(data);
-            DetourHelper.Native.FlushICache(data);
-            return data;
-        }
-
-        protected static void FreeNativeTrampoline(NativeDetourData data) {
-            DetourHelper.Native.MakeWritable(data);
-            DetourHelper.Native.MemFree(data.Method);
-            DetourHelper.Native.Free(data);
-        }
-
         protected enum CorJitResult {
             CORJIT_OK = 0,
             // There are more, but I don't particularly care about them

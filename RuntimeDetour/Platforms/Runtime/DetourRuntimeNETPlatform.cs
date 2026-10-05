@@ -101,6 +101,39 @@ namespace MonoMod.RuntimeDetour.Platforms {
             // This is not needed for .NET Framework - see DisableInliningTest.
         }
 
+        private static unsafe bool TryReadArm64PagePrecode(IntPtr curr, IntPtr methodDesc, out IntPtr target, out bool isFixup) {
+            target = IntPtr.Zero;
+            isFixup = false;
+            uint* code = (uint*)curr;
+            // CoreCLR's page-separated FixupPrecode template (vm/arm64/thunktemplates.S):
+            // ldr x11, Target; br x11; dmb ishld; ldr x12, MethodDesc;
+            // ldr x11, PrecodeFixupThunk; br x11.
+            uint load = code[0];
+            isFixup = (load & 0xFF00001Fu) == 0x5800000Bu && code[1] == 0xD61F0160u &&
+                code[2] == 0xD50339BFu && code[3] == load - 0x20u + 1u &&
+                code[4] == load && code[5] == 0xD61F0160u;
+            // StubPrecode loads Target and SecretParam from the same data page.
+            bool isStub = (load & 0xFF00001Fu) == 0x5800000Au &&
+                code[1] == load - 0x60u + 2u && code[2] == 0xD61F0140u;
+            if (!isFixup && !isStub)
+                return false;
+
+            int displacement = ((int)((load >> 5) & 0x7FFFFu) << 2) - (isStub ? 8 : 0);
+            // Match only the positive page offsets used by this template. In
+            // particular, never follow an already installed native detour.
+            if (displacement < 0x1000 || displacement > 0x10000 ||
+                (displacement & (displacement - 1)) != 0)
+                return false;
+
+            IntPtr* data = (IntPtr*)((byte*)curr + displacement);
+            // Keep PInvoke, interpreter and return-buffer adapters intact. Their
+            // SecretParam and calling convention differ from ordinary methods.
+            if (isFixup ? data[1] != methodDesc : data[0] != methodDesc || data[2] != (IntPtr)3)
+                return false;
+            target = data[isFixup ? 0 : 1];
+            return target != IntPtr.Zero;
+        }
+
         protected override unsafe IntPtr GetFunctionPointer(MethodBase method, RuntimeMethodHandle handle) {
             MMDbgLog.Log($"mets: {method.GetID()}");
             MMDbgLog.Log($"meth: 0x{(long) handle.Value:X16}");
@@ -165,6 +198,18 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 } else {
                     IntPtr WalkPrecode(IntPtr curr) {
                         long lptr = (long) curr;
+
+                        if (TryReadArm64PagePrecode(curr, handle.Value, out IntPtr pageTarget, out bool isFixup)) {
+                            // Before preparation, Target points to this precode's
+                            // fixup instructions rather than a compiled body.
+                            wasPreStub = isFixup && pageTarget.ToInt64() == curr.ToInt64() + 8;
+                            if (wasPreStub) {
+                                if (regenerated)
+                                    throw new PlatformNotSupportedException("CoreCLR ARM64 precode did not publish a method body after preparation.");
+                                regenerated = true;
+                            }
+                            return wasPreStub ? curr : pageTarget;
+                        }
 
                         if (
                             // StubPrecode

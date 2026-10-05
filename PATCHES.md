@@ -28,3 +28,31 @@ against pre-.NET 6 reference assemblies, so it uses GetLastWin32Error and resolv
 SetLastPInvokeError once from the running runtime. Older runtimes without that
 setter retain their previous behavior; modern runtimes restore the value even
 when the hook unwinds through an exception.
+
+## Modern ARM64 CoreCLR precodes and recompilation
+
+The ARM64 walker recognizes page-separated FixupPrecode and ordinary StubPrecode
+using the full instruction template and owning MethodDesc. It reads the actual
+body target instead of patching an entry stub that compiled callers may bypass.
+PInvoke, interpreter and return-buffer adapters remain intact. An unprepared fixup
+gets one preparation retry; a still unprepared method raises a managed error.
+
+The .NET 11 ARM64 JIT GUID selects a dedicated platform which forwards compilation
+requests unchanged and notifies existing detours when a pinned method is compiled
+again. It uses the request's MethodDesc identity rather than legacy signature or
+RuntimeAssembly layouts. Error helpers and delegate thunks are warmed before
+vtable installation to avoid recursive compilation, and callback notifications
+preserve last P/Invoke error state, isolate failing subscribers and contain
+diagnostic-writer exceptions. Index publication checks the live pin count under
+its lock after preparation so concurrent final Unpin cannot leave a stale entry.
+
+Modern Unix hosts resolve the JIT beside CoreLib without enumerating Process.Modules.
+Consumers must select the factory before creating detours. Unknown GUIDs retain
+the existing fallback; this adaptation does not assert support for every .NET 11
+JIT revision. Host template regressions are in the consuming MonoMod fork's
+tests/Arm64Precode; actual patch/hot-call/unpatch behavior requires ARM64 device
+acceptance through the Loader smoke Mod.
+The factory retains and reuses the installed .NET 11 hook owner: a native callback
+pointer alone cannot keep its managed delegate alive. Remove these adaptations
+when the consumed upstream provides equivalent precode decoding and matching
+.NET 11 JIT support, after rerunning the same host and ARM64 device regressions.

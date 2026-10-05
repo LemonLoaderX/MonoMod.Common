@@ -19,6 +19,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate IntPtr d_getJit();
         private static d_getJit getJit;
+        private static readonly object Net110PlatformLock = new object();
+        private static DetourRuntimeNET110Platform net110Platform;
 
         public DetourRuntimeNETCorePlatform() {
             // Apparently no dirty additionally separate call convention hackery is necessary on .NET Core..?
@@ -28,6 +30,20 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected static IntPtr GetJitObject() {
             if (getJit == null) {
+                // Embedded modern Unix hosts cannot safely enumerate Process.Modules
+                // during detour initialization. Resolve the JIT alongside CoreLib.
+                if (typeof(object).Assembly.GetName().Version.Major >= 11 && !PlatformHelper.Is(Platform.Windows)) {
+                    string path = Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "libclrjit." + PlatformHelper.LibrarySuffix);
+                    IntPtr library = DynDll.OpenLibrary(path);
+                    try {
+                        getJit = library.GetFunction(nameof(getJit)).AsDelegate<d_getJit>();
+                    } catch {
+                        DynDll.CloseLibrary(library);
+                        throw;
+                    }
+                    isNet5Jit = true;
+                    return getJit();
+                }
                 // To make sure we get the right clrjit, we enumerate the process's modules and find the one 
                 //   with the name we care about, then use its full path to gat a handle and load symbols.
                 Process currentProc = Process.GetCurrentProcess();
@@ -97,6 +113,22 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected virtual void InstallJitHooks(IntPtr jitObject) => throw new PlatformNotSupportedException();
 
+        protected static NativeDetourData CreateNativeTrampolineTo(IntPtr target) {
+            IntPtr mem = DetourHelper.Native.MemAlloc(64);
+            NativeDetourData data = DetourHelper.Native.Create(mem, target);
+            DetourHelper.Native.MakeWritable(data);
+            DetourHelper.Native.Apply(data);
+            DetourHelper.Native.MakeExecutable(data);
+            DetourHelper.Native.FlushICache(data);
+            return data;
+        }
+
+        protected static void FreeNativeTrampoline(NativeDetourData data) {
+            DetourHelper.Native.MakeWritable(data);
+            DetourHelper.Native.MemFree(data.Method);
+            DetourHelper.Native.Free(data);
+        }
+
         public override bool OnMethodCompiledWillBeCalled => false;
         public override event OnMethodCompiledEvent OnMethodCompiled;
 
@@ -131,31 +163,46 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         public static DetourRuntimeNETCorePlatform Create() {
             try {
-                IntPtr jit = GetJitObject();
-                Guid jitGuid = GetJitGuid(jit);
-
-                DetourRuntimeNETCorePlatform platform = null;
-
-                if (jitGuid == DetourRuntimeNET60Platform.JitVersionGuid) {
-                    platform = new DetourRuntimeNET60Platform();
-                } else if (jitGuid == DetourRuntimeNET50Platform.JitVersionGuid) {
-                    platform = new DetourRuntimeNET50Platform();
-                } else if (jitGuid == DetourRuntimeNETCore30Platform.JitVersionGuid) {
-                    platform = new DetourRuntimeNETCore30Platform();
-                }
-                // TODO: add more known JIT GUIDs
-
-                if (platform == null)
-                    return new DetourRuntimeNETCorePlatform();
-
-                platform?.InstallJitHooks(jit);
-                return platform;
+                return CreateForJit(GetJitObject());
             } catch (Exception e) {
                 MMDbgLog.Log("Could not get JIT information for the runtime, falling out to the version without JIT hooks");
                 MMDbgLog.Log($"Error: {e}");
             }
 
             return new DetourRuntimeNETCorePlatform();
+        }
+
+        private static DetourRuntimeNETCorePlatform CreateForJit(IntPtr jit) {
+            if (jit == IntPtr.Zero)
+                throw new PlatformNotSupportedException("The runtime did not provide a JIT object.");
+            Guid jitGuid = GetJitGuid(jit);
+
+            DetourRuntimeNETCorePlatform platform = null;
+
+            if (jitGuid == DetourRuntimeNET110Platform.JitVersionGuid && PlatformHelper.Is(Platform.ARM) && IntPtr.Size == 8) {
+                lock (Net110PlatformLock) {
+                    if (net110Platform != null)
+                        return net110Platform;
+                    var candidate = new DetourRuntimeNET110Platform();
+                    candidate.InstallJitHooks(jit);
+                    // The native vtable does not root managed delegates. Retain the
+                    // hook owner for the process and never chain a second hook.
+                    return net110Platform = candidate;
+                }
+            } else if (jitGuid == DetourRuntimeNET60Platform.JitVersionGuid) {
+                platform = new DetourRuntimeNET60Platform();
+            } else if (jitGuid == DetourRuntimeNET50Platform.JitVersionGuid) {
+                platform = new DetourRuntimeNET50Platform();
+            } else if (jitGuid == DetourRuntimeNETCore30Platform.JitVersionGuid) {
+                platform = new DetourRuntimeNETCore30Platform();
+            }
+            // TODO: add more known JIT GUIDs
+
+            if (platform == null)
+                return new DetourRuntimeNETCorePlatform();
+
+            platform.InstallJitHooks(jit);
+            return platform;
         }
     }
 }

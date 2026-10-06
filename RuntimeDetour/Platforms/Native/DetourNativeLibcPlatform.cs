@@ -43,6 +43,10 @@ namespace MonoMod.RuntimeDetour.Platforms {
             SetMemPerms(src, size, MmapProts.PROT_READ | MmapProts.PROT_WRITE | MmapProts.PROT_EXEC);
         }
 
+        internal void MakeDataWritable(IntPtr src, uint size) {
+            SetMemPerms(src, size, MmapProts.PROT_READ | MmapProts.PROT_WRITE);
+        }
+
         public void MakeExecutable(IntPtr src, uint size) {
             // RWX for sanity.
             SetMemPerms(src, size, MmapProts.PROT_READ | MmapProts.PROT_WRITE | MmapProts.PROT_EXEC);

@@ -46,6 +46,18 @@ preserve last P/Invoke error state, isolate failing subscribers and contain
 diagnostic-writer exceptions. Index publication checks the live pin count under
 its lock after preparation so concurrent final Unpin cannot leave a stale entry.
 
+The compiler vtable uses an RW data-page update, not an RWX code-page request;
+Android may deny executable permission on its file-backed RELRO mapping. POSIX
+JIT calls use the ARM64 native exception helper from upstream MonoMod commit
+`495c6c3551f1ce19e10c33ec61a6b47f58f36963`. It catches native exceptions before
+they cross P/Invoke, then rethrows outside the managed callback so CoreCLR retains
+ordinary MissingMethod/TypeLoad exception behavior. It is not an exception
+suppression layer. The consumer builds and embeds the helper; Android loads it
+from a unique private runtime file and unlinks it after loading. Failed hook
+installation releases its helper resources; an installed hook owns them for the
+process lifetime. Missing helper inputs fail selection rather than installing an
+unsafe POSIX compiler callback.
+
 Modern Unix hosts resolve the JIT beside CoreLib without enumerating Process.Modules.
 Consumers must select the factory before creating detours. Unknown GUIDs retain
 the existing fallback; this adaptation does not assert support for every .NET 11

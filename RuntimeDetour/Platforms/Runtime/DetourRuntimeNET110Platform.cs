@@ -17,6 +17,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         private readonly object methodsLock = new object();
         private CompileMethod original;
         private CompileMethod hook;
+        private DetourNativeExceptionHelper exceptionHelper;
         [ThreadStatic] private static int depth;
         private static readonly Action<int> RestoreLastPInvokeError =
             typeof(Marshal).GetMethod("SetLastPInvokeError", new[] { typeof(int) }) is MethodInfo setter
@@ -31,6 +32,11 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         public override bool OnMethodCompiledWillBeCalled => true;
         public override event OnMethodCompiledEvent OnMethodCompiled;
+
+        internal void ReleaseJitHookHelpers() {
+            exceptionHelper?.Dispose();
+            exceptionHelper = null;
+        }
 
         public override void Pin(MethodBase method) {
             method = GetIdentifiable(method);
@@ -67,7 +73,12 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected override unsafe void InstallJitHooks(IntPtr jit) {
             IntPtr* slot = GetVTableEntry(jit, VTableIndex_ICorJitCompiler_compileMethod);
-            original = (*slot).AsDelegate<CompileMethod>();
+            IntPtr originalPointer = *slot;
+            if (!PlatformHelper.Is(Platform.Windows)) {
+                exceptionHelper = new DetourNativeExceptionHelper();
+                originalPointer = exceptionHelper.WrapManagedToNative(originalPointer);
+            }
+            original = originalPointer.AsDelegate<CompileMethod>();
             RuntimeHelpers.PrepareDelegate(original);
             RestoreLastPInvokeError(Marshal.GetLastWin32Error());
             hook = Compile;
@@ -80,11 +91,18 @@ namespace MonoMod.RuntimeDetour.Platforms {
             } finally {
                 FreeNativeTrampoline(trampoline);
             }
-            DetourHelper.Native.MakeWritable((IntPtr)slot, (uint)IntPtr.Size);
+            if (exceptionHelper != null)
+                callback = exceptionHelper.WrapNativeToManaged(callback);
+            // The JIT vtable is data. Android rejects executable permission on
+            // its file-backed read-only page even though an RW update is allowed.
+            if (DetourHelper.Native is DetourNativeLibcPlatform libc)
+                libc.MakeDataWritable((IntPtr)slot, (uint)IntPtr.Size);
+            else
+                DetourHelper.Native.MakeWritable((IntPtr)slot, (uint)IntPtr.Size);
             Interlocked.Exchange(ref *slot, callback);
         }
 
-        private int Compile(IntPtr jit, IntPtr info, IntPtr methodInfo, uint flags,
+        private unsafe int Compile(IntPtr jit, IntPtr info, IntPtr methodInfo, uint flags,
             out IntPtr entry, out uint size) {
             entry = IntPtr.Zero;
             size = 0;
@@ -92,9 +110,19 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 return 0;
 
             int error = Marshal.GetLastWin32Error();
+            IntPtr* exceptionSlot = exceptionHelper == null ? null : (IntPtr*)exceptionHelper.GetSlot();
+            IntPtr nativeException = IntPtr.Zero;
             depth++;
             try {
-                int result = original(jit, info, methodInfo, flags, out entry, out size);
+                int result;
+                try {
+                    result = original(jit, info, methodInfo, flags, out entry, out size);
+                } catch (InvalidProgramException) when (exceptionSlot != null && *exceptionSlot == IntPtr.Zero) {
+                    // CoreCLR reports invalid IL on its normal managed call path.
+                    return unchecked((int)0x80000001); // CORJIT_BADCODE
+                }
+                if (exceptionSlot != null && (nativeException = *exceptionSlot) != IntPtr.Zero)
+                    return result;
                 if (result == 0 && depth == 1 && entry != IntPtr.Zero) {
                     try {
                         MethodBase method;
@@ -118,6 +146,8 @@ namespace MonoMod.RuntimeDetour.Platforms {
             } finally {
                 RestoreLastPInvokeError(error);
                 depth--;
+                if (exceptionSlot != null)
+                    *exceptionSlot = nativeException;
             }
         }
 

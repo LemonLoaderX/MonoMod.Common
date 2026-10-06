@@ -184,7 +184,12 @@ namespace MonoMod.RuntimeDetour.Platforms {
                     if (net110Platform != null)
                         return net110Platform;
                     var candidate = new DetourRuntimeNET110Platform();
-                    candidate.InstallJitHooks(jit);
+                    try {
+                        candidate.InstallJitHooks(jit);
+                    } catch {
+                        candidate.ReleaseJitHookHelpers();
+                        throw;
+                    }
                     // The native vtable does not root managed delegates. Retain the
                     // hook owner for the process and never chain a second hook.
                     return net110Platform = candidate;

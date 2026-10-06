@@ -13,6 +13,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
         private readonly GetExceptionSlot getExceptionSlot;
         private readonly IntPtr managedToNative;
         private readonly IntPtr nativeToManaged;
+        public readonly IntPtr JitInfoVTable;
         private IntPtr library;
         private IntPtr managedToNativeStub;
         private IntPtr nativeToManagedStub;
@@ -36,6 +37,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
                 getExceptionSlot = library.GetFunction("eh_get_exception_ptr").AsDelegate<GetExceptionSlot>();
                 managedToNative = library.GetFunction("eh_managed_to_native");
                 nativeToManaged = library.GetFunction("eh_native_to_managed");
+                JitInfoVTable = library.GetFunction("mm_jit_info_vtable");
                 // Warm the marshaling wrapper before publishing the JIT hook.
                 GetSlot();
                 File.Delete(path);

@@ -37,8 +37,8 @@ body target instead of patching an entry stub that compiled callers may bypass.
 PInvoke, interpreter and return-buffer adapters remain intact. An unprepared fixup
 gets one preparation retry; a still unprepared method raises a managed error.
 
-The .NET 11 ARM64 JIT GUID selects a dedicated platform which forwards compilation
-requests unchanged and notifies existing detours when a pinned method is compiled
+The .NET 11 ARM64 JIT GUID selects a dedicated platform which preserves
+CORINFO_METHOD_INFO and notifies existing detours when a pinned method is compiled
 again. It uses the request's MethodDesc identity rather than legacy signature or
 RuntimeAssembly layouts. Error helpers and delegate thunks are warmed before
 vtable installation to avoid recursive compilation, and callback notifications
@@ -57,6 +57,17 @@ from a unique private runtime file and unlinks it after loading. Failed hook
 installation releases its helper resources; an installed hook owns them for the
 process lifetime. Missing helper inputs fail selection rather than installing an
 unsafe POSIX compiler callback.
+
+Outer compilations use an ICorJitInfo forwarding vtable with allocMem interception
+to retain the hot code's executable and writable addresses. The interface has
+183 slots and allocMem index166 for the supported GUID; the allocation layouts
+come from runtime b85b9fbd264f's corjit.h. Nested compilations
+forward directly without acquiring the pin-index lock. The pin index is read after
+compilation so a method pinned while compilation is in flight remains covered.
+Notifications for pinned methods patch the
+writable code before CoreCLR publishes it, while detours retain the executable
+address and copy original bytes from the writable buffer for later Undo. Patching
+only the executable address can be overwritten after the compiler callback.
 
 Modern Unix hosts resolve the JIT beside CoreLib without enumerating Process.Modules.
 Consumers must select the factory before creating detours. Unknown GUIDs retain

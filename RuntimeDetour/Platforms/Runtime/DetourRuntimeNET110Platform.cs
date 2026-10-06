@@ -32,6 +32,7 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         public override bool OnMethodCompiledWillBeCalled => true;
         public override event OnMethodCompiledEvent OnMethodCompiled;
+        internal event Action<MethodBase, IntPtr, IntPtr, ulong> OnMethodCompiledWithWritableCode;
 
         internal void ReleaseJitHookHelpers() {
             exceptionHelper?.Dispose();
@@ -114,9 +115,18 @@ namespace MonoMod.RuntimeDetour.Platforms {
             IntPtr nativeException = IntPtr.Zero;
             depth++;
             try {
+                IntPtr* wrapper = stackalloc IntPtr[5];
+                for (int i = 0; i < 5; i++)
+                    wrapper[i] = IntPtr.Zero;
+                IntPtr compilerInfo = info;
+                if (depth == 1 && exceptionHelper != null) {
+                    wrapper[0] = exceptionHelper.JitInfoVTable;
+                    wrapper[1] = info;
+                    compilerInfo = (IntPtr)wrapper;
+                }
                 int result;
                 try {
-                    result = original(jit, info, methodInfo, flags, out entry, out size);
+                    result = original(jit, compilerInfo, methodInfo, flags, out entry, out size);
                 } catch (InvalidProgramException) when (exceptionSlot != null && *exceptionSlot == IntPtr.Zero) {
                     // CoreCLR reports invalid IL on its normal managed call path.
                     return unchecked((int)0x80000001); // CORJIT_BADCODE
@@ -128,8 +138,26 @@ namespace MonoMod.RuntimeDetour.Platforms {
                         MethodBase method;
                         lock (methodsLock)
                             methods.TryGetValue(Marshal.ReadIntPtr(methodInfo), out method);
+                        if (method == null)
+                            return result;
+                        IntPtr writableEntry = entry;
+                        if (compilerInfo != info) {
+                            long offset = entry.ToInt64() - wrapper[2].ToInt64();
+                            if (wrapper[3] == IntPtr.Zero || offset < 0 ||
+                                (ulong)offset + size > (ulong)wrapper[4].ToInt64())
+                                throw new InvalidOperationException("The JIT did not provide a matching writable code allocation.");
+                            writableEntry = new IntPtr(wrapper[3].ToInt64() + offset);
+                        }
+                        var writableHandlers = OnMethodCompiledWithWritableCode;
+                        if (writableHandlers != null)
+                            foreach (Action<MethodBase, IntPtr, IntPtr, ulong> handler in writableHandlers.GetInvocationList())
+                                try {
+                                    handler(method, entry, writableEntry, size);
+                                } catch (Exception e) {
+                                    LogNotificationError(e);
+                                }
                         OnMethodCompiledEvent handlers = OnMethodCompiled;
-                        if (method != null && handlers != null) {
+                        if (handlers != null) {
                             foreach (OnMethodCompiledEvent handler in handlers.GetInvocationList()) {
                                 try {
                                     handler(method, entry, size);

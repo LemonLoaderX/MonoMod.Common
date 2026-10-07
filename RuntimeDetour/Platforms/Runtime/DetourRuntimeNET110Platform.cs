@@ -68,8 +68,21 @@ namespace MonoMod.RuntimeDetour.Platforms {
 
         protected override unsafe void DisableInlining(MethodBase method, RuntimeMethodHandle handle) {
             // .NET 11 MethodDesc::m_wFlags, mdfNotInline (vm/method.hpp).
-            ushort* flags = (ushort*)((byte*)handle.Value + 6);
-            *flags |= 0x2000;
+            SetNotInline(handle.Value);
+        }
+
+        internal static unsafe void SetNotInline(IntPtr methodDesc) {
+            // Match MethodDesc::InterlockedUpdateFlags: update the aligned DWORD
+            // containing m_wFlags atomically, preserving both flags and the slot.
+            ref int flagsAndSlot = ref *(int*)((byte*)methodDesc + 4);
+            int mask = BitConverter.IsLittleEndian ? 0x20000000 : 0x2000;
+            int observed = Volatile.Read(ref flagsAndSlot);
+            while (true) {
+                int previous = Interlocked.CompareExchange(ref flagsAndSlot, observed | mask, observed);
+                if (previous == observed)
+                    return;
+                observed = previous;
+            }
         }
 
         protected override unsafe void InstallJitHooks(IntPtr jit) {

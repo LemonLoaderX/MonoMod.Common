@@ -45,6 +45,9 @@ vtable installation to avoid recursive compilation, and callback notifications
 preserve last P/Invoke error state, isolate failing subscribers and contain
 diagnostic-writer exceptions. Index publication checks the live pin count under
 its lock after preparation so concurrent final Unpin cannot leave a stale entry.
+The .NET 11 not-inline flag uses an aligned 32-bit compare/exchange loop matching
+MethodDesc::InterlockedUpdateFlags. It preserves concurrent runtime flags and the
+adjacent slot field; a non-atomic 16-bit read/modify/write can lose those updates.
 
 The compiler vtable uses an RW data-page update, not an RWX code-page request;
 Android may deny executable permission on its file-backed RELRO mapping. POSIX

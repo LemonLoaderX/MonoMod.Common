@@ -58,6 +58,12 @@ installation releases its helper resources; an installed hook owns them for the
 process lifetime. Missing helper inputs fail selection rather than installing an
 unsafe POSIX compiler callback.
 
+The helper initializes each newly allocated per-thread exception slot to zero.
+Malloc storage may retain a prior allocation's bytes; those bytes must never be
+interpreted as an unwind exception. Existing same-thread state is preserved when
+the slot is retrieved again. The consumer's native exception-slot fixture fills
+freed allocations with a sentinel before exercising fresh threads.
+
 Outer compilations use an ICorJitInfo forwarding vtable with allocMem interception
 to retain the hot code's executable and writable addresses. The interface has
 183 slots and allocMem index166 for the supported GUID; the allocation layouts

@@ -129,6 +129,7 @@ LOCAL_LABEL(egep_init):
     mov x0, #8
     bl EXTERNAL_C_FUNC(malloc)
     mov x19, x0
+    str xzr, [x19]
     mov x1, x0
     mov x0, x20
     bl EXTERNAL_C_FUNC(pthread_setspecific)
